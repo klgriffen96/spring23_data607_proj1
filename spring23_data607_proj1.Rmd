@@ -1,0 +1,226 @@
+---
+title: "Data 607 Project 1"
+author: "Kayleah Griffen"
+date: "2023-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this project, a text file with chess tournament results was provided. The objective was to create an R Markdown file that generates a .CSV file with the following information for all of the players:
+
+Player’s Name, Player’s State, Total Number of Points, Player’s Pre-Rating, and Average Pre Chess Rating of Opponents 
+
+For example:
+
+Gary Hua, ON, 6.0, 1794, 1605
+
+## Processing
+
+Load required packages.
+
+```{r, message=FALSE }
+library(RCurl)
+library(tidyverse)
+```
+
+Read in the text file from github and take a look at the start.
+
+```{r get-text}
+x <- getURL("https://raw.githubusercontent.com/klgriffen96/spring23_data607_proj1/main/chess_scores.txt")
+glimpse(x)
+```
+
+Text files are generally broken into new lines using `\r\n` which can be seen in this file. Start by splitting on `\r\n` so each line is separated.
+
+```{r split-1}
+# Split x 
+s <- str_split_fixed(x, "\r\n", n=Inf)
+# View first ten entries
+s[1:10]
+```
+From the file extract the:
+
+- Starting row
+- Last player ID
+- The number of rounds
+
+```{r, warning = FALSE}
+# Get start row and last PID
+for (i in 1:length(s)){
+   temp <- as.integer(str_extract_all(s[i],"^\\s+[1]\\s+"))
+   temp2 <- as.integer(str_extract_all(s[i],"^\\s+[0-9]+"))
+   if (is.na(temp) == FALSE){
+     start_row <- i # Get the row that the actual games start on 
+     cat("Start row is: ", start_row)
+   }
+   if (is.na(temp2) == FALSE){
+     last_id <- temp2 # Get the PID of the last game
+   }
+}
+cat("Last PID is: ",last_id) 
+
+# Get the number of rounds
+for (i in 1:length(s)){
+  temp <- str_extract_all(s[i],"\\s+[0-9]+\\s+\\|\\s+$")
+  temp <- str_split_fixed(temp, "\\|", n=Inf)
+  if (temp[1][1] != "character(0)"){
+    n_rounds <- as.integer(temp[1][1])
+    cat("Number of rounds: ", n_rounds)
+    break
+  }                                 
+}
+```
+
+Form one dataframe that has the following information:
+
+- Player ID
+- Player Name
+- Total Number of Points
+- State
+- Players Pre-Rating
+
+Form a matrix that has the PID followed by the opponent IDs, with NAs for no opponent for that round.
+
+```{r simplify-s}
+
+# Make the dataframes
+p_info <- data.frame(
+  p_id = integer(),
+  p_name = character(),
+  p_points = double(),
+  p_state = character(),
+  p_prerating = integer()
+)
+
+o_ids <- matrix(, nrow = last_id, ncol = n_rounds + 1)
+
+for (i in seq(start_row,length(s),by =3)){
+  
+  ss_1 <- str_split_fixed(s[i],regex("|", literal=TRUE),n=Inf)
+  # PID | P Name | Total Points | X Opponent PID | X Opponent PID | etc...
+  # If X is W,L or D - read Opponent PID, increment total opponents
+  p_id <- as.integer(ss_1[1])
+  p_name <- str_trim(ss_1[2],side="both")
+  p_points <- as.double(ss_1[3])
+  
+  ss_2 <- str_split_fixed(s[i+1],regex("|", literal=TRUE), n=Inf)
+  # State | X/R: Player’s Pre-Rating
+  p_state <- str_trim(ss_2[1],side="both")
+  temp <- str_extract_all(ss_2[2],"[0-9]+")
+  p_prerating <- as.integer(temp[[1]][2])
+  
+  start_i <- 4
+  start_o <- 2
+  o_ids[p_id, 1] <- p_id
+  for (ii in start_i:(length(ss_1)-1)){
+      o_ids[p_id, start_o] <- as.integer(str_extract(ss_1[ii],"[0-9]+"))
+      start_o <- start_o + 1
+  }
+  
+  p_temp <- data.frame(
+    p_id,
+    p_name,
+    p_points,
+    p_state,
+    p_prerating)
+  
+  p_info <- rbind(p_info, p_temp)
+}
+```
+
+
+Now that there is a dataframe with all the player information and a matrix with all of the player-opponent information, the calculation for the average pre-chess rating of opponents can be made for each player.
+
+```{r}
+pco_rating <- matrix(, nrow = last_id, ncol = 2)
+for (i in 1:dim(o_ids)[1]){
+  temp_sum <- 0
+  temp_total <-0
+  for (ii in 2:dim(o_ids)[2]){
+    temp_o_id <- o_ids[i,ii]
+    if (is.na(temp_o_id) == FALSE){
+      temp_sum <- temp_sum + p_info$p_prerating[temp_o_id]
+      temp_total <- temp_total + 1
+    }
+  }
+  if (temp_total > 0){
+    temp_average <- temp_sum/temp_total
+  } else {
+    temp_average <- NA # handle case where no opponents
+  }
+  pco_rating[i,1] <- o_ids[i,1]
+  pco_rating[i,2] <- temp_average
+}
+```
+
+Now, all relevant information is in the dataframe except the pre-chess rating of the opponents.
+Do a quick check that the number of rows in the dataframe and the matrix match.
+
+```{r}
+dim(p_info)
+dim(pco_rating)
+```
+
+Make a new dataframe that includes the rounded pre-chess rating of the opponents.
+
+```{r}
+df <- data.frame(
+  p_name = character(),
+  p_points = double(),
+  p_state = character(),
+  p_prerating = integer(),
+  o_prerating = integer())
+
+for (i in 1:dim(p_info)[1]){
+  p_info$p_id[i]
+  for (ii in 1:dim(pco_rating)[1]){
+    if (p_info$p_id[i] == pco_rating[ii,1]){
+      df_temp <-  data.frame( 
+                    p_info$p_name[i],
+                    p_info$p_points[i],
+                    p_info$p_state[i],
+                    p_info$p_prerating[i],
+                    round(pco_rating[ii,2]))
+      df <- rbind(df, df_temp)
+      break
+    }
+  }
+}
+```
+
+Do a quick check to see if the results make sense.
+
+```{r}
+head(df)
+```
+
+A brief check validates the data.
+
+Write the dataframe to a csv file.
+
+```{r}
+write.csv(df, "chess_ratings.csv")
+```
+
+## Conclusion
+
+This code successfully takes the input text file and produces an output file with the Player’s Name, Player’s State, Total Number of Points, Player’s Pre-Rating, and Average Pre Chess Rating of Opponents.
+
+This code is flexible in a few ways:
+
+(1) The starting row can be in a different place, it is just the first row that starts with a `1`.
+(2) The number of rounds can be varied, as it is detected based on the last number of the header row.
+(3) The number of players can be varied, as the last players row is detected as the last row starting with a number.
+
+For debugging purposes, rather than relying on the index of the `p_info` dataframe, the `o_ids` matrix, and the `pco_ratings` matrix to align and indicate the Player ID, I stored the Player ID in each. For `p_info` it is `p_info$p_id` and for `o_ids` and `pco_ratings` it is the first column. This way if an entry or entries are missing, the Player ID is still preserved and can be referenced back to. 
+
+This code will include players in the output csv, even if the player did not have any opponents. In this case, the average pre-chess rating of opponents column would be `NA`. 
+
+A shortcoming of this code is that it may not handle an incorrectly formatted row well. Depending on what the formatting error is, the code could get into a state that it would not recover from. 
+
+To extend this code, I would take the input file and introduce different formatting errors to it and work on the error handling aspects of the code.
